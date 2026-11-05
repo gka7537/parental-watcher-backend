@@ -7,15 +7,19 @@ const router = express.Router();
 const { authMiddleware } = require('../utils/auth');
 const cloudinary = require('cloudinary').v2;
 const ActivityLog = require('../models/ActivityLog');
+const Device = require('../models/Device');
 
 // POST /api/files/upload/:deviceId
 router.post('/upload/:deviceId', authMiddleware, async (req, res) => {
     try {
-        const { data, type, metadata } = req.body;
+        const device = await Device.findOne({
+            deviceId: req.params.deviceId,
+            owner: req.user.id
+        });
+        if (!device) return res.status(403).json({ error: 'Forbidden - device not owned by user' });
 
-        if (!data || !type) {
-            return res.status(400).json({ error: 'File data and type are required' });
-        }
+        const { data, type, metadata } = req.body;
+        if (!data || !type) return res.status(400).json({ error: 'File data and type are required' });
 
         let resourceType = 'auto';
         if (type.includes('image')) resourceType = 'image';
@@ -30,6 +34,7 @@ router.post('/upload/:deviceId', authMiddleware, async (req, res) => {
 
         await ActivityLog.create({
             deviceId: req.params.deviceId,
+            userId: req.user.id,
             eventType: 'file_uploaded',
             description: `File uploaded: ${uploadResult.public_id}`,
             metadata: { public_id: uploadResult.public_id, url: uploadResult.secure_url }
@@ -51,6 +56,12 @@ router.post('/upload/:deviceId', authMiddleware, async (req, res) => {
 // GET /api/files/list/:deviceId
 router.get('/list/:deviceId', authMiddleware, async (req, res) => {
     try {
+        const device = await Device.findOne({
+            deviceId: req.params.deviceId,
+            owner: req.user.id
+        });
+        if (!device) return res.status(403).json({ error: 'Forbidden - device not owned by user' });
+
         const { prefix, max_results = 20 } = req.query;
         const result = await cloudinary.api.resources({
             prefix: prefix || `parental_watcher/${req.params.deviceId}`,
@@ -69,6 +80,7 @@ router.get('/list/:deviceId', authMiddleware, async (req, res) => {
             }))
         });
     } catch (error) {
+        console.error('List files error:', error.message);
         res.status(500).json({ error: 'Failed to list files' });
     }
 });
