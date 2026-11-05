@@ -1,30 +1,43 @@
 /**
  * Parental Watcher Backend Server
- * Complete Node.js + Express + MongoDB server
  */
 
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
 const http = require('http');
 const { Server } = require('ws');
 const path = require('path');
 
-// Import modules
-const config = require('./config/index');
+const config = require('./config');
 const connectDB = require('./database/connection');
-const { authMiddleware } = require('./utils/auth');
 const cloudinary = require('cloudinary').v2;
 
-// Initialize Cloudinary
 cloudinary.config({
     cloud_name: config.cloudinary.cloud_name,
     api_key: config.cloudinary.api_key,
     api_secret: config.cloudinary.api_secret
 });
 
-// Routes
+// Firebase Admin init
+try {
+    const admin = require('firebase-admin');
+    if (config.firebase.projectId && config.firebase.privateKey && config.firebase.clientEmail) {
+        admin.initializeApp({
+            credential: admin.credential.cert({
+                projectId: config.firebase.projectId,
+                privateKey: config.firebase.privateKey,
+                clientEmail: config.firebase.clientEmail
+            })
+        });
+        console.log('Firebase Admin initialized');
+    } else {
+        console.warn('Firebase credentials missing - FCM disabled');
+    }
+} catch (err) {
+    console.warn('Firebase init skipped:', err.message);
+}
+
 const authRoutes = require('./routes/auth');
 const deviceRoutes = require('./routes/device');
 const usageRoutes = require('./routes/usage');
@@ -35,18 +48,15 @@ const fileRoutes = require('./routes/files');
 const contactRoutes = require('./routes/contacts');
 const whatsappCallRoutes = require('./routes/whatsappCalls');
 
-// Express app
 const app = express();
 const server = http.createServer(app);
 const wss = new Server({ server });
 
-// Middleware
 app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/usage', usageRoutes);
@@ -57,7 +67,6 @@ app.use('/api/files', fileRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/calls', whatsappCallRoutes);
 
-// Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -80,7 +89,6 @@ app.get('/', (req, res) => {
     });
 });
 
-// WebSocket connections
 const deviceClients = new Map();
 const parentSessions = new Map();
 
@@ -91,7 +99,6 @@ wss.on('connection', (ws, req) => {
     ws.on('message', (data) => {
         try {
             const message = JSON.parse(data.toString());
-
             if (message.type === 'register') {
                 connectedDeviceId = message.device_id;
                 isParentSession = message.is_parent || false;
@@ -118,17 +125,13 @@ wss.on('connection', (ws, req) => {
             const parentSet = parentSessions.get(connectedDeviceId);
             if (parentSet) {
                 parentSet.delete(ws);
-                if (parentSet.size === 0) {
-                    parentSessions.delete(connectedDeviceId);
-                }
+                if (parentSet.size === 0) parentSessions.delete(connectedDeviceId);
             }
         } else if (connectedDeviceId) {
             const deviceSet = deviceClients.get(connectedDeviceId);
             if (deviceSet) {
                 deviceSet.delete(ws);
-                if (deviceSet.size === 0) {
-                    deviceClients.delete(connectedDeviceId);
-                }
+                if (deviceSet.size === 0) deviceClients.delete(connectedDeviceId);
             }
         }
     });
@@ -139,9 +142,7 @@ function broadcastToDevice(deviceId, event, data) {
     if (clients) {
         const message = JSON.stringify({ type: event, data, timestamp: new Date().toISOString() });
         clients.forEach((client) => {
-            if (client.readyState === 1) {
-                client.send(message);
-            }
+            if (client.readyState === 1) client.send(message);
         });
     }
 }
@@ -151,9 +152,7 @@ function broadcastToParent(deviceId, event, data) {
     if (clients) {
         const message = JSON.stringify({ type: event, data, timestamp: new Date().toISOString() });
         clients.forEach((client) => {
-            if (client.readyState === 1) {
-                client.send(message);
-            }
+            if (client.readyState === 1) client.send(message);
         });
     }
 }
@@ -161,13 +160,11 @@ function broadcastToParent(deviceId, event, data) {
 app.set('broadcastToDevice', broadcastToDevice);
 app.set('broadcastToParent', broadcastToParent);
 
-// Error handler
 app.use((err, req, res, next) => {
     console.error('Error:', err);
     res.status(500).json({ error: 'Internal server error' });
 });
 
-// Start server
 const PORT = config.port;
 connectDB()
     .then(() => {
