@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const UsageLog = require('../models/UsageLog');
+const Device = require('../models/Device');
 const { authMiddleware } = require('../utils/auth');
 
 // POST /api/usage/sync
@@ -15,6 +16,9 @@ router.post('/sync', authMiddleware, async (req, res) => {
         if (!device_id || !Array.isArray(logs)) {
             return res.status(400).json({ error: 'device_id and logs array are required' });
         }
+
+        const device = await Device.findOne({ deviceId: device_id, owner: req.user.id });
+        if (!device) return res.status(403).json({ error: 'Forbidden - device not owned by user' });
 
         const enrichedLogs = logs.map(log => ({
             deviceId: device_id,
@@ -38,6 +42,12 @@ router.post('/sync', authMiddleware, async (req, res) => {
 // GET /api/usage/daily/:deviceId
 router.get('/daily/:deviceId', authMiddleware, async (req, res) => {
     try {
+        const device = await Device.findOne({
+            deviceId: req.params.deviceId,
+            owner: req.user.id
+        });
+        if (!device) return res.status(403).json({ error: 'Forbidden - device not owned by user' });
+
         const { date } = req.query;
         const targetDate = date || new Date().toISOString().split('T')[0];
         const startOfDay = new Date(targetDate);
@@ -52,6 +62,7 @@ router.get('/daily/:deviceId', authMiddleware, async (req, res) => {
 
         res.json({ date: targetDate, summary });
     } catch (error) {
+        console.error('Usage daily error:', error.message);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
