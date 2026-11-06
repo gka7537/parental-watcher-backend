@@ -8,7 +8,7 @@ const DeviceSchema = new mongoose.Schema({
     owner: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: true
+        required: false // Child app bina owner ke register hoga, parent baad mein claim karega
     },
     deviceName: {
         type: String,
@@ -27,6 +27,7 @@ const DeviceSchema = new mongoose.Schema({
     osVersion: String,
     deviceModel: String,
     brand: String,
+    fcmToken: String, // FCM Token save karne ke liye
     // Status
     isOnline: {
         type: Boolean,
@@ -103,12 +104,6 @@ const DeviceSchema = new mongoose.Schema({
         fps: { type: Number, default: 25 },
         videoBitrate: { type: Number, default: 1500000 },
         audioBitrate: { type: Number, default: 96000 }
-    },
-    // Auto upload settings
-    autoUpload: {
-        enabled: { type: Boolean, default: true },
-        deleteAfterUpload: { type: Boolean, default: true },
-        uploadInterval: { type: Number, default: 300000 }
     },
     // Registration
     registeredAt: {
