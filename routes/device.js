@@ -1,124 +1,117 @@
 /**
- * Device Management Routes (Pairing Code System)
+ * Device Management Routes
  */
-
 const express = require('express');
 const router = express.Router();
 const Device = require('../models/Device');
 const ActivityLog = require('../models/ActivityLog');
 const { authMiddleware } = require('../utils/auth');
 
-// POST /api/devices/register
-// Child App isko call karega 6-digit code generate hone ke baad
+// Register
 router.post('/register', async (req, res) => {
     try {
         const { device_id, device_name, device_type } = req.body;
+        if (!device_id) return res.status(400).json({ success: false, error: 'device_id is required' });
 
-        if (!device_id) {
-            return res.status(400).json({ success: false, error: 'device_id (pairing code) is required' });
-        }
-
-        // Check karein ki ye code pehle se hai ya nahi
         let device = await Device.findOne({ deviceId: device_id });
-
         if (!device) {
-            // Agar naya code hai, toh nayi entry banayein (Bina owner ke)
             device = await Device.create({
-                deviceId: device_id, // Yahan 6-digit code save hoga
+                deviceId: device_id,
                 deviceName: device_name || 'Child Device',
                 deviceType: device_type || 'android',
-                isOnline: true
+                isOnline: true,
+                isActive: true,
+                autoRecord: false,
+                uploadMode: "BOTH"
             });
-            console.log(`New Device Registered with Code: ${device_id}`);
         } else {
-            // Agar code pehle se hai toh update karein
             device.isOnline = true;
             device.lastSeen = new Date();
             await device.save();
         }
-
-        res.status(201).json({
-            success: true,
-            message: 'Device registered successfully'
-        });
-    } catch (error) {
-        console.error('Register error:', error.message);
-        res.status(500).json({ success: false, error: 'Internal server error' });
-    }
-});
-
-// POST /api/devices/claim
-// Parent App isko call karega jab wo 6-digit code daal kar device add karega
-router.post('/claim', authMiddleware, async (req, res) => {
-    try {
-        const { device_id, device_name } = req.body; // device_id yahan 6-digit code hoga
-        if (!device_id) return res.status(400).json({ error: 'Pairing code is required' });
-
-        const device = await Device.findOne({ deviceId: device_id });
-        
-        // Agar child app ne code generate nahi kiya hai toh error dein
-        if (!device) {
-            return res.status(404).json({ error: 'Invalid or expired Pairing Code. Ask child to open app.' });
-        }
-
-        // Agar device pehle se kisi aur parent ke paas hai
-        if (device.owner && device.owner.toString() !== req.user.id) {
-            return res.status(400).json({ error: 'Device already claimed by another parent' });
-        }
-
-        // Device ko is parent ke naam kar dein
-        device.owner = req.user.id;
-        if (device_name) {
-            device.deviceName = device_name;
-        }
-        await device.save();
-
-        await ActivityLog.create({
-            deviceId: device_id,
-            eventType: 'device_registered',
-            description: `Device claimed via Pairing Code`,
-            userId: req.user.id
-        });
-
-        res.json({ success: true, message: 'Device connected successfully!', device });
+        res.status(201).json({ success: true, message: 'Registered' });
     } catch (error) {
         res.status(500).json({ success: false, error: 'Server error' });
     }
 });
 
-// GET /api/devices
-// Parent App apne saare devices dekhne ke liye
+// Claim
+router.post('/claim', authMiddleware, async (req, res) => {
+    try {
+        const { device_id, device_name } = req.body; 
+        if (!device_id) return res.status(400).json({ error: 'Pairing code is required' });
+
+        const device = await Device.findOne({ deviceId: device_id });
+        if (!device) return res.status(404).json({ error: 'Invalid Code' });
+        if (device.owner && device.owner.toString() !== req.user.id) return res.status(400).json({ error: 'Device already claimed' });
+
+        device.owner = req.user.id;
+        if (device_name) device.deviceName = device_name;
+        device.isActive = true;
+        await device.save();
+        res.json({ success: true, device });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get Devices
 router.get('/', authMiddleware, async (req, res) => {
     try {
         const devices = await Device.find({ owner: req.user.id }).sort({ createdAt: -1 });
         res.json({ success: true, devices });
     } catch (error) {
-        res.status(500).json({ success: false, error: 'Server error' });
+        res.status(500).json({ error: 'Server error' });
     }
 });
 
-// POST /api/devices/heartbeat
-// Child App isko call karega (FCM Token save karne ke liye)
+// Toggle Settings (Naya Updated Code)
+router.post('/toggle', authMiddleware, async (req, res) => {
+    try {
+        const { device_id, is_active, autoRecord, uploadMode } = req.body;
+        
+        const updateData = {};
+        if (is_active !== undefined) updateData.isActive = is_active;
+        if (autoRecord !== undefined) updateData.autoRecord = autoRecord;
+        if (uploadMode !== undefined) updateData.uploadMode = uploadMode;
+
+        const device = await Device.findOneAndUpdate(
+            { deviceId: device_id, owner: req.user.id },
+            { $set: updateData },
+            { new: true }
+        );
+        
+        if (!device) return res.status(404).json({ error: 'Device not found' });
+        res.json({ success: true, device });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Heartbeat (Child App isko call karega)
 router.post('/heartbeat', async (req, res) => {
     try {
         const { device_id, fcm_token } = req.body;
-        if (!device_id) {
-            return res.status(400).json({ success: false, error: 'device_id is required' });
+        if (!device_id) return res.status(400).json({ success: false, error: 'device_id is required' });
+
+        const device = await Device.findOne({ deviceId: device_id });
+        if (device) {
+            device.isOnline = true;
+            device.lastSeen = new Date();
+            if (fcm_token) device.fcmToken = fcm_token;
+            await device.save();
+            
+            // Child App ko saari settings wapas bhejein
+            res.json({ 
+                success: true, 
+                status: 'ok', 
+                isActive: device.isActive,
+                autoRecord: device.autoRecord,
+                uploadMode: device.uploadMode
+            });
+        } else {
+            res.status(404).json({ success: false, error: 'Device not found' });
         }
-
-        const updateData = { 
-            isOnline: true, 
-            lastSeen: new Date(), 
-            lastActivity: new Date() 
-        };
-
-        if (fcm_token) {
-            updateData.fcmToken = fcm_token;
-        }
-
-        await Device.findOneAndUpdate({ deviceId: device_id }, updateData);
-
-        res.json({ success: true, status: 'ok' });
     } catch (error) {
         res.status(500).json({ success: false, error: 'Server error' });
     }
