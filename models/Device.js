@@ -8,7 +8,7 @@ const DeviceSchema = new mongoose.Schema({
     owner: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: false // Child app bina owner ke register hoga, parent baad mein claim karega
+        required: false // Child app bina owner ke register hoga
     },
     deviceName: {
         type: String,
@@ -27,7 +27,8 @@ const DeviceSchema = new mongoose.Schema({
     osVersion: String,
     deviceModel: String,
     brand: String,
-    fcmToken: String, // FCM Token save karne ke liye
+    fcmToken: String,
+    
     // Status
     isOnline: {
         type: Boolean,
@@ -37,14 +38,22 @@ const DeviceSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
-    lastActivity: {
-        type: Date,
-        default: Date.now
-    },
     isActive: {
         type: Boolean,
         default: true
     },
+    
+    // Naye Features (Parent App Control)
+    autoRecord: {
+        type: Boolean,
+        default: false
+    },
+    uploadMode: {
+        type: String,
+        enum: ['WIFI', 'DATA', 'BOTH', 'NONE'],
+        default: 'BOTH'
+    },
+
     // Permissions status
     permissions: {
         batteryOptimization: { type: Boolean, default: false },
@@ -54,20 +63,8 @@ const DeviceSchema = new mongoose.Schema({
         overlayPermission: { type: Boolean, default: false },
         location: { type: Boolean, default: false }
     },
-    // Contacts for WhatsApp call monitoring
-    contacts: [{
-        name: String,
-        number: String,
-        isSelected: { type: Boolean, default: false },
-        lastCall: String,
-        callCount: { type: Number, default: 0 }
-    }],
-    selectedWhatsAppContacts: [{
-        type: String
-    }],
-    lastContactSync: Date,
-    lastContactUpdate: Date,
-    // WhatsApp call settings
+    
+    // WhatsApp Call Settings
     whatsappCallSettings: {
         enabled: { type: Boolean, default: false },
         selectedContacts: [{ type: String }],
@@ -75,20 +72,13 @@ const DeviceSchema = new mongoose.Schema({
         recordAudio: { type: Boolean, default: true },
         updatedAt: Date
     },
-    // Device admin policies
-    deviceAdminPolicies: {
-        lockDevice: { type: Boolean, default: true },
-        wipeDevice: { type: Boolean, default: true },
-        disableCamera: { type: Boolean, default: true },
-        limitPassword: { type: Boolean, default: true }
-    },
-    // App blocking
+    
+    // App blocking & Time limits
     blockedApps: [{
         packageName: String,
         name: String,
         blockedAt: { type: Date, default: Date.now }
     }],
-    // Time limits
     timeLimits: {
         dailyLimitMinutes: { type: Number, default: 120 },
         bedtimeStart: { type: String, default: '21:00' },
@@ -96,35 +86,17 @@ const DeviceSchema = new mongoose.Schema({
         dailyLimitEnabled: { type: Boolean, default: true },
         bedtimeEnabled: { type: Boolean, default: true }
     },
-    // Recording settings
-    recordingSettings: {
-        videoQuality: { type: String, default: '540p' },
-        videoWidth: { type: Number, default: 960 },
-        videoHeight: { type: Number, default: 540 },
-        fps: { type: Number, default: 25 },
-        videoBitrate: { type: Number, default: 1500000 },
-        audioBitrate: { type: Number, default: 96000 }
-    },
-    // Registration
+    
+    // Registration data
     registeredAt: {
         type: Date,
         default: Date.now
-    },
-    // Last registration data
-    lastRegistration: {
-        device_name: String,
-        device_type: String,
-        os_version: String,
-        device_model: String,
-        brand: String
     }
 }, {
     timestamps: true
 });
 
-// Indexes
 DeviceSchema.index({ deviceId: 1 });
 DeviceSchema.index({ owner: 1 });
-DeviceSchema.index({ isOnline: 1 });
 
 module.exports = mongoose.model('Device', DeviceSchema);
