@@ -1,5 +1,5 @@
 /**
- * Device Management Routes
+ * Device Management Routes (Pairing Code System)
  */
 
 const express = require('express');
@@ -9,30 +9,29 @@ const ActivityLog = require('../models/ActivityLog');
 const { authMiddleware } = require('../utils/auth');
 
 // POST /api/devices/register
-// Child App isko call karega bina token ke
+// Child App isko call karega 6-digit code generate hone ke baad
 router.post('/register', async (req, res) => {
     try {
-        const { device_id, device_name, device_type, os_version, device_model, brand } = req.body;
+        const { device_id, device_name, device_type } = req.body;
 
         if (!device_id) {
-            return res.status(400).json({ success: false, error: 'device_id is required' });
+            return res.status(400).json({ success: false, error: 'device_id (pairing code) is required' });
         }
 
+        // Check karein ki ye code pehle se hai ya nahi
         let device = await Device.findOne({ deviceId: device_id });
 
         if (!device) {
+            // Agar naya code hai, toh nayi entry banayein (Bina owner ke)
             device = await Device.create({
-                deviceId: device_id,
+                deviceId: device_id, // Yahan 6-digit code save hoga
                 deviceName: device_name || 'Child Device',
                 deviceType: device_type || 'android',
-                osVersion: os_version,
-                deviceModel: device_model,
-                brand: brand,
-                isOnline: true,
-                lastRegistration: { device_name, device_type, os_version, device_model, brand }
+                isOnline: true
             });
-            console.log(`New device registered: ${device_id}`);
+            console.log(`New Device Registered with Code: ${device_id}`);
         } else {
+            // Agar code pehle se hai toh update karein
             device.isOnline = true;
             device.lastSeen = new Date();
             await device.save();
@@ -40,24 +39,27 @@ router.post('/register', async (req, res) => {
 
         res.status(201).json({
             success: true,
-            device_id: device.deviceId,
             message: 'Device registered successfully'
         });
     } catch (error) {
-        console.error('Register device error:', error.message);
+        console.error('Register error:', error.message);
         res.status(500).json({ success: false, error: 'Internal server error' });
     }
 });
 
 // POST /api/devices/claim
-// Parent App isko call karega jab wo Device ID daal kar device add karega
+// Parent App isko call karega jab wo 6-digit code daal kar device add karega
 router.post('/claim', authMiddleware, async (req, res) => {
     try {
-        const { device_id } = req.body;
-        if (!device_id) return res.status(400).json({ error: 'device_id is required' });
+        const { device_id, device_name } = req.body; // device_id yahan 6-digit code hoga
+        if (!device_id) return res.status(400).json({ error: 'Pairing code is required' });
 
         const device = await Device.findOne({ deviceId: device_id });
-        if (!device) return res.status(404).json({ error: 'Device not found' });
+        
+        // Agar child app ne code generate nahi kiya hai toh error dein
+        if (!device) {
+            return res.status(404).json({ error: 'Invalid or expired Pairing Code. Ask child to open app.' });
+        }
 
         // Agar device pehle se kisi aur parent ke paas hai
         if (device.owner && device.owner.toString() !== req.user.id) {
@@ -66,17 +68,19 @@ router.post('/claim', authMiddleware, async (req, res) => {
 
         // Device ko is parent ke naam kar dein
         device.owner = req.user.id;
-        device.deviceName = req.body.device_name || device.deviceName;
+        if (device_name) {
+            device.deviceName = device_name;
+        }
         await device.save();
 
         await ActivityLog.create({
             deviceId: device_id,
             eventType: 'device_registered',
-            description: `Device claimed by parent`,
+            description: `Device claimed via Pairing Code`,
             userId: req.user.id
         });
 
-        res.json({ success: true, message: 'Device added successfully', device });
+        res.json({ success: true, message: 'Device connected successfully!', device });
     } catch (error) {
         res.status(500).json({ success: false, error: 'Server error' });
     }
@@ -114,7 +118,7 @@ router.post('/heartbeat', async (req, res) => {
 
         await Device.findOneAndUpdate({ deviceId: device_id }, updateData);
 
-        res.json({ success: true, status: 'ok', last_sync: new Date().toISOString() });
+        res.json({ success: true, status: 'ok' });
     } catch (error) {
         res.status(500).json({ success: false, error: 'Server error' });
     }
