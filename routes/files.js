@@ -1,6 +1,5 @@
 /**
- * File Upload & Gallery Routes - Cloudinary
- * Handles uploading from Child App and listing/deleting from Parent App
+ * File Upload Routes - Cloudinary (Updated for Pairing Code)
  */
 
 const express = require('express');
@@ -9,20 +8,16 @@ const cloudinary = require('cloudinary').v2;
 const ActivityLog = require('../models/ActivityLog');
 const Device = require('../models/Device');
 
-// ==========================================
-// 1. CHILD APP ROUTES (Upload)
-// ==========================================
-
 // POST /api/files/upload/:deviceId
-// Note: Auth middleware removed so child app can upload directly using device ID
+// Yahan deviceId ab 6-digit pairing code hoga
 router.post('/upload/:deviceId', async (req, res) => {
     try {
         const deviceId = req.params.deviceId;
         
-        // Verify if device exists
+        // Verify karein ki ye 6-digit code database mein exist karta hai ya nahi
         const device = await Device.findOne({ deviceId: deviceId });
         if (!device) {
-            return res.status(403).json({ error: 'Forbidden - Device not registered' });
+            return res.status(403).json({ error: 'Forbidden - Invalid Pairing Code' });
         }
 
         const { data, type, metadata } = req.body;
@@ -33,14 +28,14 @@ router.post('/upload/:deviceId', async (req, res) => {
         else if (type.includes('video')) resourceType = 'video';
         else if (type.includes('audio')) resourceType = 'audio';
 
-        // Cloudinary Upload
+        // Cloudinary Upload (Folder mein 6-digit code use hoga)
         const uploadResult = await cloudinary.uploader.upload(data, {
             resource_type: resourceType,
             folder: `parental_watcher/${deviceId}`,
             ...metadata
         });
 
-        // Log the upload in database
+        // Database mein log save karein
         await ActivityLog.create({
             deviceId: deviceId,
             eventType: 'file_uploaded',
@@ -66,19 +61,13 @@ router.post('/upload/:deviceId', async (req, res) => {
     }
 });
 
-// ==========================================
-// 2. PARENT APP ROUTES (List & Delete)
-// ==========================================
-
 // GET /api/files/list/:deviceId
-// Parent app gallery mein files dekhne ke liye
+// Parent app gallery mein files dekhne ke liye (Yahan bhi 6-digit code aayega)
 router.get('/list/:deviceId', async (req, res) => {
     try {
         const deviceId = req.params.deviceId;
-        
-        const { max_results = 50 } = req.query; // Ek baar mein max 50 files
+        const { max_results = 50 } = req.query; 
 
-        // Cloudinary folder se files fetch karein
         const result = await cloudinary.api.resources({
             prefix: `parental_watcher/${deviceId}`,
             max_results: parseInt(max_results),
@@ -97,7 +86,7 @@ router.get('/list/:deviceId', async (req, res) => {
         });
     } catch (error) {
         console.error('List files error:', error.message);
-        // Agar folder khali hai toh empty array return karein, error nahi
+        // Agar folder khali hai toh empty array return karein
         if (error.http_code === 404 || error.message.includes('Resource not found')) {
             return res.json({ files: [] });
         }
@@ -106,30 +95,20 @@ router.get('/list/:deviceId', async (req, res) => {
 });
 
 // DELETE /api/files/delete
-// Parent app purani files delete karne ke liye (Optional)
+// Parent app purani files delete karne ke liye
 router.delete('/delete', async (req, res) => {
     try {
         const { public_id, resource_type } = req.body;
-        
-        if (!public_id) {
-            return res.status(400).json({ error: 'public_id is required' });
-        }
+        if (!public_id) return res.status(400).json({ error: 'public_id is required' });
 
         const type = resource_type || 'auto';
         
-        // Cloudinary se file delete karein
         const result = await cloudinary.uploader.destroy(public_id, { 
             resource_type: type,
             invalidate: true 
         });
 
         if (result.result === 'ok') {
-            // Database log update karein
-            await ActivityLog.findOneAndUpdate(
-                { 'metadata.public_id': public_id },
-                { $set: { description: 'File deleted by parent' } }
-            );
-
             res.json({ success: true, message: 'File deleted successfully' });
         } else {
             res.status(400).json({ error: 'Failed to delete file from Cloudinary' });
