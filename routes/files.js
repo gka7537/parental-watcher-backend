@@ -4,19 +4,21 @@
 
 const express = require('express');
 const router = express.Router();
-const { authMiddleware } = require('../utils/auth');
 const cloudinary = require('cloudinary').v2;
 const ActivityLog = require('../models/ActivityLog');
 const Device = require('../models/Device');
 
 // POST /api/files/upload/:deviceId
-router.post('/upload/:deviceId', authMiddleware, async (req, res) => {
+// Note: Auth middleware removed so child app can upload directly with device ID
+router.post('/upload/:deviceId', async (req, res) => {
     try {
-        const device = await Device.findOne({
-            deviceId: req.params.deviceId,
-            owner: req.user.id
-        });
-        if (!device) return res.status(403).json({ error: 'Forbidden - device not owned by user' });
+        const deviceId = req.params.deviceId;
+        
+        // Verify if device exists
+        const device = await Device.findOne({ deviceId: deviceId });
+        if (!device) {
+            return res.status(403).json({ error: 'Forbidden - Device not registered' });
+        }
 
         const { data, type, metadata } = req.body;
         if (!data || !type) return res.status(400).json({ error: 'File data and type are required' });
@@ -26,17 +28,17 @@ router.post('/upload/:deviceId', authMiddleware, async (req, res) => {
         else if (type.includes('video')) resourceType = 'video';
         else if (type.includes('audio')) resourceType = 'audio';
 
+        // Cloudinary Upload
         const uploadResult = await cloudinary.uploader.upload(data, {
             resource_type: resourceType,
-            folder: `parental_watcher/${req.params.deviceId}`,
+            folder: `parental_watcher/${deviceId}`,
             ...metadata
         });
 
         await ActivityLog.create({
-            deviceId: req.params.deviceId,
-            userId: req.user.id,
+            deviceId: deviceId,
             eventType: 'file_uploaded',
-            description: `File uploaded: ${uploadResult.public_id}`,
+            description: `File uploaded from child app: ${uploadResult.public_id}`,
             metadata: { public_id: uploadResult.public_id, url: uploadResult.secure_url }
         });
 
@@ -54,17 +56,13 @@ router.post('/upload/:deviceId', authMiddleware, async (req, res) => {
 });
 
 // GET /api/files/list/:deviceId
-router.get('/list/:deviceId', authMiddleware, async (req, res) => {
+router.get('/list/:deviceId', async (req, res) => {
     try {
-        const device = await Device.findOne({
-            deviceId: req.params.deviceId,
-            owner: req.user.id
-        });
-        if (!device) return res.status(403).json({ error: 'Forbidden - device not owned by user' });
-
+        const deviceId = req.params.deviceId;
+        
         const { prefix, max_results = 20 } = req.query;
         const result = await cloudinary.api.resources({
-            prefix: prefix || `parental_watcher/${req.params.deviceId}`,
+            prefix: prefix || `parental_watcher/${deviceId}`,
             max_results: parseInt(max_results),
             resource_type: 'auto'
         });
